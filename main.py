@@ -14,12 +14,12 @@ from opacus import PrivacyEngine
 from opacus.validators import ModuleValidator
 import copy
 
-# 评估指标函数
+
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score, recall_score, precision_score
 
 
 class PairedEmbeddingDataset(Dataset):
-    """配对的embedding和label数据集"""
+
     def __init__(self, embeddings, labels):
         self.embeddings = torch.FloatTensor(embeddings)
         self.labels = torch.FloatTensor(labels)
@@ -49,7 +49,7 @@ class MLP_Classifier(nn.Module):
 
 
 def compute_metrics(pred, labels):
-    """计算所有评估指标"""
+
     pred_probs = torch.softmax(pred, dim=1)[:, 1].detach().cpu().numpy()
     pred_labels = torch.argmax(pred, dim=1).detach().cpu().numpy()
     true_labels = labels.detach().cpu().numpy()
@@ -70,7 +70,7 @@ def compute_metrics(pred, labels):
 
 
 def load_all_datasets(data_dir='./paired_data/'):
-    """加载所有配对的数据集"""
+
     embed_files = [f for f in os.listdir(data_dir) if f.endswith('_embeds.npy')]
     
     datasets = {}
@@ -95,7 +95,7 @@ def load_all_datasets(data_dir='./paired_data/'):
 
 
 def split_dataset(embeddings, labels, train_rate=0.8, seed=42):
-    """划分训练集和测试集"""
+  
     dataset = PairedEmbeddingDataset(embeddings, labels)
     train_size = int(len(dataset) * train_rate)
     test_size = len(dataset) - train_size
@@ -108,9 +108,8 @@ def split_dataset(embeddings, labels, train_rate=0.8, seed=42):
     return train_dataset, test_dataset
 
 
-# ==================== 方法1: Baseline ====================
 def train_baseline(train_loader, test_loader, args, device):
-    """标准训练（Baseline）"""
+
     print("\n" + "="*60)
     print("Training: BASELINE")
     print("="*60)
@@ -127,7 +126,7 @@ def train_baseline(train_loader, test_loader, args, device):
     history = {'train': [], 'test': []}
     
     for epoch in range(args.epochs):
-        # 训练
+        
         model.train()
         train_loss = 0
         train_preds, train_labels = [], []
@@ -151,7 +150,7 @@ def train_baseline(train_loader, test_loader, args, device):
         train_metrics, _, _ = compute_metrics(train_preds, train_labels)
         train_metrics['loss'] = train_loss / len(train_loader)
         
-        # 测试
+
         model.eval()
         test_loss = 0
         test_preds, test_labels = [], []
@@ -182,9 +181,8 @@ def train_baseline(train_loader, test_loader, args, device):
     return model, history, test_probs, test_pred_labels, test_labels.cpu().numpy()
 
 
-# ==================== 方法2: DP-SGD ====================
 def train_dp_sgd(train_loader, test_loader, args, device):
-    """使用差分隐私训练"""
+
     print("\n" + "="*60)
     print("Training: DP-SGD")
     print("="*60)
@@ -195,13 +193,12 @@ def train_dp_sgd(train_loader, test_loader, args, device):
         num_classes=args.num_classes
     ).to(device)
     
-    # 验证模型是否兼容Opacus
+
     model = ModuleValidator.fix(model)
     
     loss_function = nn.CrossEntropyLoss()
     optimizer = optim.AdamW(model.parameters(), lr=args.lr)
-    
-    # 配置隐私引擎
+
     privacy_engine = PrivacyEngine()
     model, optimizer, train_loader = privacy_engine.make_private_with_epsilon(
         module=model,
@@ -220,7 +217,7 @@ def train_dp_sgd(train_loader, test_loader, args, device):
     history = {'train': [], 'test': [], 'epsilon': []}
     
     for epoch in range(args.epochs):
-        # 训练
+
         model.train()
         train_loss = 0
         train_preds, train_labels = [], []
@@ -243,12 +240,11 @@ def train_dp_sgd(train_loader, test_loader, args, device):
         train_labels = torch.cat(train_labels)
         train_metrics, _, _ = compute_metrics(train_preds, train_labels)
         train_metrics['loss'] = train_loss / len(train_loader)
-        
-        # 获取当前隐私消耗
+
         epsilon = privacy_engine.get_epsilon(args.target_delta)
         train_metrics['epsilon'] = epsilon
         
-        # 测试
+
         model.eval()
         test_loss = 0
         test_preds, test_labels = [], []
@@ -279,7 +275,7 @@ def train_dp_sgd(train_loader, test_loader, args, device):
               f"Test Loss: {test_metrics['loss']:.4f}, "
               f"Acc: {test_metrics['accuracy']:.4f}, AUROC: {test_metrics['auroc']:.4f}")
     
-    # 最终隐私预算
+
     final_epsilon = privacy_engine.get_epsilon(args.target_delta)
     print(f"\n{'='*60}")
     print(f"Final Privacy Budget Consumed: ε={final_epsilon:.2f}, δ={args.target_delta:.2e}")
@@ -288,14 +284,13 @@ def train_dp_sgd(train_loader, test_loader, args, device):
     return model, history, test_probs, test_pred_labels, test_labels.cpu().numpy()
 
 
-# ==================== 方法3: FedAvg ====================
 def train_fedavg(datasets, test_data, args, device):
-    """联邦学习 FedAvg"""
+
     print("\n" + "="*60)
     print("Training: FedAvg")
     print("="*60)
     
-    # 全局模型
+
     global_model = MLP_Classifier(
         input_size=args.input_size,
         hidden_size=args.hidden_size,
@@ -304,13 +299,13 @@ def train_fedavg(datasets, test_data, args, device):
     
     loss_function = nn.CrossEntropyLoss()
     
-    # 为每个数据集创建数据加载器
+
     client_loaders = []
     for dataset_name, data in datasets.items():
         train_dataset, _ = split_dataset(
             data['embeddings'], 
             data['labels'], 
-            train_rate=1.0,  # 全部用于训练
+            train_rate=1.0,
             seed=args.seed
         )
         loader = DataLoader(
@@ -321,7 +316,7 @@ def train_fedavg(datasets, test_data, args, device):
         client_loaders.append((dataset_name, loader))
         print(f"  Client {dataset_name}: {len(train_dataset)} samples")
     
-    # 测试数据加载器
+
     test_loader = DataLoader(test_data, batch_size=args.test_batch_size, shuffle=False)
     
     history = {'train': [], 'test': []}
@@ -332,9 +327,9 @@ def train_fedavg(datasets, test_data, args, device):
         local_weights = []
         local_losses = []
         
-        # 本地训练
+
         for client_name, train_loader in client_loaders:
-            # 创建本地模型（复制全局模型）
+          
             local_model = MLP_Classifier(
                 input_size=args.input_size,
                 hidden_size=args.hidden_size,
@@ -344,7 +339,7 @@ def train_fedavg(datasets, test_data, args, device):
             
             optimizer = optim.AdamW(local_model.parameters(), lr=args.lr)
             
-            # 本地训练
+
             local_model.train()
             epoch_loss = 0
             for _ in range(args.local_epochs):
@@ -364,7 +359,7 @@ def train_fedavg(datasets, test_data, args, device):
             local_losses.append(epoch_loss / len(train_loader))
             print(f"  {client_name} - Loss: {epoch_loss/len(train_loader):.4f}")
         
-        # FedAvg 聚合
+
         global_weights = {}
         for key in global_model.state_dict().keys():
             global_weights[key] = torch.stack([
@@ -373,7 +368,7 @@ def train_fedavg(datasets, test_data, args, device):
         
         global_model.load_state_dict(global_weights)
         
-        # 全局测试
+      
         global_model.eval()
         test_loss = 0
         test_preds, test_labels = [], []
@@ -403,15 +398,14 @@ def train_fedavg(datasets, test_data, args, device):
     return global_model, history, test_probs, test_pred_labels, test_labels.cpu().numpy()
 
 
-# ==================== 可视化 ====================
 def plot_comparison_results(results, output_dir='./comparison_results/'):
-    """绘制对比结果"""
+
     os.makedirs(output_dir, exist_ok=True)
     
     methods = list(results.keys())
     metrics = ['accuracy', 'auroc', 'f1', 'precision', 'recall']
     
-    # 1. Bar chart - 性能对比
+
     fig, ax = plt.subplots(figsize=(12, 6))
     x = np.arange(len(metrics))
     width = 0.25
@@ -434,7 +428,7 @@ def plot_comparison_results(results, output_dir='./comparison_results/'):
     plt.savefig(os.path.join(output_dir, 'metrics_comparison_bar.png'), dpi=300)
     plt.close()
     
-    # 2. ROC curves
+
     fig, ax = plt.subplots(figsize=(10, 8))
     
     for method in methods:
@@ -455,7 +449,7 @@ def plot_comparison_results(results, output_dir='./comparison_results/'):
     plt.savefig(os.path.join(output_dir, 'roc_curves.png'), dpi=300)
     plt.close()
     
-    # 3. Training curves
+ 
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
     
     plot_metrics = ['loss', 'accuracy', 'auroc', 'f1']
@@ -477,7 +471,7 @@ def plot_comparison_results(results, output_dir='./comparison_results/'):
     plt.savefig(os.path.join(output_dir, 'training_curves.png'), dpi=300)
     plt.close()
     
-    # 4. Confusion matrices
+
     fig, axes = plt.subplots(1, 3, figsize=(15, 4))
     
     for idx, method in enumerate(methods):
@@ -498,7 +492,7 @@ def plot_comparison_results(results, output_dir='./comparison_results/'):
     plt.savefig(os.path.join(output_dir, 'confusion_matrices.png'), dpi=300)
     plt.close()
     
-    # 5. Privacy budget tracking (if DP-SGD is included)
+  
     if 'DP-SGD' in results and 'epsilon' in results['DP-SGD']['history']:
         fig, ax = plt.subplots(figsize=(10, 6))
         
@@ -527,10 +521,10 @@ def plot_comparison_results(results, output_dir='./comparison_results/'):
 
 
 def save_results_table(results, output_dir='./comparison_results/'):
-    """保存结果表格"""
+ 
     os.makedirs(output_dir, exist_ok=True)
     
-    # 创建结果DataFrame
+    
     data = []
     for method, res in results.items():
         row = {'Method': method}
@@ -539,8 +533,7 @@ def save_results_table(results, output_dir='./comparison_results/'):
     
     df = pd.DataFrame(data)
     df = df.round(4)
-    
-    # 保存CSV
+
     csv_path = os.path.join(output_dir, 'results_summary.csv')
     df.to_csv(csv_path, index=False)
     print(f"\nResults saved to {csv_path}")
@@ -548,8 +541,7 @@ def save_results_table(results, output_dir='./comparison_results/'):
     print("FINAL RESULTS SUMMARY")
     print("="*60)
     print(df.to_string(index=False))
-    
-    # 保存详细结果
+  
     with open(os.path.join(output_dir, 'detailed_results.pkl'), 'wb') as f:
         pickle.dump(results, f)
 
@@ -557,21 +549,20 @@ def save_results_table(results, output_dir='./comparison_results/'):
 def main():
     parser = argparse.ArgumentParser(description='Drug Response Prediction Comparison')
     
-    # 数据参数
+
     parser.add_argument('--data_dir', type=str, default='./paired_data/',
                        help='Directory containing paired embeddings and labels')
     parser.add_argument('--output_dir', type=str, default='./comparison_results/',
                        help='Output directory for results')
     
-    # 模型参数
+
     parser.add_argument('--input_size', type=int, default=256,
                        help='Input embedding size')
     parser.add_argument('--hidden_size', type=int, default=512,
                        help='Hidden layer size')
     parser.add_argument('--num_classes', type=int, default=2,
                        help='Number of classes')
-    
-    # 训练参数
+
     parser.add_argument('--epochs', type=int, default=20,
                        help='Number of epochs for Baseline and DP-SGD')
     parser.add_argument('--batch_size', type=int, default=32,
@@ -584,22 +575,19 @@ def main():
                        help='Training data ratio')
     parser.add_argument('--seed', type=int, default=42,
                        help='Random seed')
-    
-    # DP-SGD 参数
+
     parser.add_argument('--target_epsilon', type=float, default=10.0,
                        help='Target epsilon for DP-SGD')
     parser.add_argument('--target_delta', type=float, default=1e-5,
                        help='Target delta for DP-SGD')
     parser.add_argument('--max_grad_norm', type=float, default=1.0,
                        help='Max gradient norm for DP-SGD')
-    
-    # FedAvg 参数
+   
     parser.add_argument('--fed_rounds', type=int, default=20,
                        help='Number of federated learning rounds')
     parser.add_argument('--local_epochs', type=int, default=5,
                        help='Local epochs per round in FedAvg')
-    
-    # 实验选择
+ 
     parser.add_argument('--methods', nargs='+', 
                        default=['baseline', 'dp-sgd', 'fedavg'],
                        choices=['baseline', 'dp-sgd', 'fedavg'],
@@ -607,28 +595,26 @@ def main():
     
     args = parser.parse_args()
     
-    # 设置随机种子
+
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Using device: {device}")
     
-    # 加载所有数据集
+ 
     print("\nLoading datasets...")
     datasets = load_all_datasets(args.data_dir)
     
     if not datasets:
         raise ValueError(f"No datasets found in {args.data_dir}")
     
-    # 合并所有数据用于 Baseline 和 DP-SGD
     all_embeddings = np.vstack([d['embeddings'] for d in datasets.values()])
     all_labels = np.concatenate([d['labels'] for d in datasets.values()])
     
     print(f"\nTotal dataset: {all_embeddings.shape[0]} samples")
     print(f"Label distribution: {np.bincount(all_labels.astype(int))}")
-    
-    # 划分训练集和测试集
+
     train_dataset, test_dataset = split_dataset(
         all_embeddings, all_labels, 
         train_rate=args.train_rate, 
@@ -649,10 +635,10 @@ def main():
     print(f"Train set: {len(train_dataset)} samples")
     print(f"Test set: {len(test_dataset)} samples")
     
-    # 存储结果
+
     results = {}
     
-    # 训练各个方法
+
     if 'baseline' in args.methods:
         model, history, probs, pred_labels, true_labels = train_baseline(
             train_loader, test_loader, args, device
@@ -666,7 +652,7 @@ def main():
             'final_metrics': history['test'][-1]
         }
         
-        # 保存模型
+
         os.makedirs(args.output_dir, exist_ok=True)
         torch.save(model.state_dict(), 
                   os.path.join(args.output_dir, 'baseline_model.pth'))
@@ -705,7 +691,7 @@ def main():
         torch.save(model.state_dict(), 
                   os.path.join(args.output_dir, 'fedavg_model.pth'))
     
-    # 可视化和保存结果
+
     plot_comparison_results(results, args.output_dir)
     save_results_table(results, args.output_dir)
     
